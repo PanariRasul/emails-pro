@@ -1,0 +1,47 @@
+{
+  "name": "emails-pro-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Emails Pro API + in-process PostgreSQL-backed campaign worker",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env --max-old-space-size=384 src/server.js",
+    "dev": "node --env-file-if-exists=.env --watch src/server.js",
+    "build": "prisma generate",
+    "migrate:deploy": "prisma migrate deploy",
+    "migrate:status": "prisma migrate status",
+    "render:build": "npm ci --omit=dev && prisma generate && prisma migrate deploy",
+    "test": "node --test test/unit.test.js",
+    "test:db": "node --test --test-concurrency=1 test/e2e.test.js test/recovery.test.js",
+    "check": "node --check src/server.js"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "^2.0.2",
+    "@prisma/adapter-pg": "6.19.3",
+    "@prisma/client": "6.19.3",
+    "compression": "^1.8.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "imapflow": "^1.0.190",
+    "jsonwebtoken": "^9.0.2",
+    "mailparser": "^3.7.2",
+    "nodemailer": "^10.6.1",
+    "pg": "^8.23.1",
+    "pino": "^9.6.0",
+    "prisma": "6.19.3",
+    "sanitize-html": "^2.14.0",
+    "zod": "^4.6.7"
+  },
+  "optionalDependencies": {
+    "ioredis": "^5.4.2"
+  },
+  "devDependencies": {
+    "smtp-server": "^3.21.7"
+  }
+}

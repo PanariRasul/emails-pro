@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ep
+          POSTGRES_PASSWORD: ep
+          POSTGRES_DB: emailspro_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ep" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ep:ep@localhost:5432/emailspro_ci
+      DIRECT_URL: postgresql://ep:ep@localhost:5432/emailspro_ci
+      SHADOW_URL: postgresql://ep:ep@localhost:5432/emailspro_shadow
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npx prisma generate
+      - name: Apply migrations (same command as production)
+        run: npx prisma migrate deploy
+      - name: Migrations are in sync with schema.prisma
+        run: |
+          PGPASSWORD=ep psql -h localhost -U ep -d emailspro_ci -c "CREATE DATABASE emailspro_shadow"
+          npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "$SHADOW_URL" --exit-code
+      - name: Syntax check
+        run: node --check src/server.js
+      - name: Unit tests
+        run: npm test
+      - name: End-to-end + recovery tests (real PostgreSQL, fake SMTP, mock SES)
+        run: npm run test:db
+        env:
+          E2E_DATABASE_URL: postgresql://ep:ep@localhost:5432/emailspro_ci
+      - name: Dependency audit (runtime deps)
+        run: npm audit --omit=dev --audit-level=critical
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high

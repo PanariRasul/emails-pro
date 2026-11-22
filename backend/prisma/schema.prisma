@@ -1,0 +1,552 @@
+// Emails Pro — Prisma schema
+// Database: Neon PostgreSQL (pooled URL for the app, direct URL for migrations)
+
+// Rust-free Prisma Client: queries run through the `pg` driver adapter (lib/prisma.js).
+// No native query-engine process => lower RAM on Render Free.
+generator client {
+  provider   = "prisma-client-js"
+  engineType      = "client"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  ADMIN
+  EMPLOYEE
+}
+
+enum Provider {
+  GMAIL
+  GOOGLE_WORKSPACE
+  ZOHO
+  YAHOO
+  REDIFFMAIL
+  AMAZON_SES
+  CUSTOM
+}
+
+enum AccountStatus {
+  PENDING
+  CONNECTED
+  ERROR
+  PAUSED
+  DISABLED
+}
+
+enum CampaignType {
+  FRESH
+  FOLLOWUP
+}
+
+enum CampaignStatus {
+  DRAFT
+  PENDING_APPROVAL
+  SCHEDULED
+  SENDING
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum RecipientStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+  BOUNCED
+  UNKNOWN
+  ON_HOLD
+  SKIPPED
+  SUPPRESSED
+}
+
+enum AttemptStatus {
+  STARTED
+  ACCEPTED
+  FAILED
+  UNKNOWN
+}
+
+enum SuppressionReason {
+  UNSUBSCRIBE
+  HARD_BOUNCE
+  COMPLAINT
+  INVALID
+  MANUAL
+}
+
+enum EventType {
+  OPEN
+  CLICK
+  UNSUBSCRIBE
+  BOUNCE
+  COMPLAINT
+  REPLY
+}
+
+enum Direction {
+  INBOUND
+  OUTBOUND
+}
+
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  name             String
+  passwordHash     String
+  role             Role      @default(EMPLOYEE)
+  isActive         Boolean   @default(true)
+  sendingDisabled  Boolean   @default(false)
+  // Per-employee overrides. NULL means "use the system default".
+  accountLimit     Int?
+  dailyLimit       Int?
+  hourlyLimit      Int?
+  requireApproval  Boolean   @default(false)
+  tokenVersion     Int       @default(0)
+  lastLoginAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  refreshTokens    RefreshToken[]
+  accounts         EmailAccount[]
+  campaigns        Campaign[]
+  pitches          Pitch[]
+  lists            RecipientList[]
+  messages         EmailMessage[]
+  notifications    Notification[]
+  challenges       AuthChallenge[]
+  phone            String?
+  title            String?
+
+  @@index([role, isActive])
+}
+
+model RefreshToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  familyId   String
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  replacedBy String?
+  // false => "Remember me" unchecked: session cookie + short expiry, kept across rotation
+  persistent Boolean   @default(true)
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
+}
+
+/// Singleton row (id = 1) holding admin-controlled system policy.
+model SystemSettings {
+  id                       Int      @id @default(1)
+  defaultAccountLimit      Int      @default(100)
+  maxAccountLimit          Int      @default(500)
+  defaultDailyLimit        Int      @default(500)
+  defaultHourlyLimit       Int      @default(60)
+  maxEmployeeDailyLimit    Int      @default(5000)
+  maxWorkingCampaigns      Int      @default(7)
+  maxRetries               Int      @default(3)
+  globalSendingPaused      Boolean  @default(false)
+  allowAccountCreate       Boolean  @default(true)
+  allowAccountEdit         Boolean  @default(true)
+  allowAccountDelete       Boolean  @default(true)
+  allowAccountReconnect    Boolean  @default(true)
+  trackingEnabled          Boolean  @default(true)
+  footerText               String   @default("You received this email because of a prior business contact. Unsubscribe: {{unsubscribeUrl}}")
+  footerHtml               String   @default("<p style=\"font-size:11px;color:#888;margin-top:24px\">Don't want these emails? <a href=\"{{unsubscribeUrl}}\" style=\"color:#888\">Unsubscribe</a></p>")
+  /// Warm-up: day 1 sends this % of an account's normal daily limit, rising evenly to 100% on the last day.
+  warmupStartPercent       Int      @default(20)
+  warmupDays               Int      @default(10)
+  bounceRatePauseThreshold Float    @default(0.08)
+  complaintRatePauseThreshold Float @default(0.003)
+  imapSyncIntervalMin      Int      @default(3)
+  healthCheckIntervalSec   Int      @default(300)
+  // Login security
+  otpLoginEnabled          Boolean  @default(false)
+  otpForAdmins             Boolean  @default(false)
+  // System mailbox that sends OTP / password-reset codes. When connected with Google sign-in it sends via
+  // the Gmail API (works on Render Free); otherwise SYSTEM_MAIL_USER + SYSTEM_MAIL_APP_PASSWORD (SMTP) are used.
+  systemMailEmail          String?
+  systemMailRefreshEnc     String?
+  updatedAt                DateTime @updatedAt
+}
+
+enum ChallengePurpose {
+  LOGIN
+  PASSWORD_RESET
+}
+
+/// One-time email codes (login OTP, password reset). Only a hash of the code is stored.
+model AuthChallenge {
+  id          String           @id @default(cuid())
+  userId      String
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose     ChallengePurpose
+  codeHash    String
+  attempts    Int              @default(0)
+  remember    Boolean          @default(false)
+  expiresAt   DateTime
+  lastSentAt  DateTime         @default(now())
+  sendCount   Int              @default(1)
+  consumedAt  DateTime?
+  ip          String?
+  createdAt   DateTime         @default(now())
+
+  @@index([userId, purpose, createdAt])
+  @@index([expiresAt])
+}
+
+model EmailAccount {
+  id                   String        @id @default(cuid())
+  ownerId              String
+  owner                User          @relation(fields: [ownerId], references: [id])
+  email                String
+  displayName          String?
+  provider             Provider
+  smtpHost             String
+  smtpPort             Int
+  smtpSecure           Boolean       @default(true)
+  smtpUser             String
+  // PASSWORD (password / app password) or OAUTH2 (Google). Secrets are AES-256-GCM encrypted.
+  authType             String        @default("PASSWORD")
+  smtpPassEnc          String?
+  oauthRefreshEnc      String?
+  imapHost             String?
+  imapPort             Int?
+  imapSecure           Boolean       @default(true)
+  imapUser             String?
+  imapPassEnc          String?
+  status               AccountStatus @default(PENDING)
+  smtpOk               Boolean       @default(false)
+  imapOk               Boolean       @default(false)
+  adminDisabled        Boolean       @default(false)
+  lastTestAt           DateTime?
+  lastError            String?
+  consecutiveFailures  Int           @default(0)
+  // Admin caps for this account (NULL => employee/system defaults apply).
+  maxHourly            Int?
+  maxDaily             Int?
+  // Shared pacing slot for ALL campaigns using this account.
+  nextSendAt           DateTime?
+  warmupEnabled        Boolean       @default(false)
+  warmupStartedAt      DateTime?
+  /// Per-account warm-up override (null = system default).
+  warmupStartPercent   Int?
+  warmupDays           Int?
+  dnsSpf               Boolean?
+  dnsDmarc             Boolean?
+  imapUidValidity      BigInt?
+  imapLastUid          Int?
+  imapLastSyncAt       DateTime?
+  imapNextSyncAt       DateTime?
+  deletedAt            DateTime?
+  /// Free-text group chosen by the employee ("Gmail", "Zoho team", …) for quick multi-select in campaigns.
+  groupName            String?
+  /// Spam / Junk folder sync state (replies and bounces that landed in spam).
+  imapSpamPath         String?
+  imapSpamUidValidity  BigInt?
+  imapSpamLastUid      Int?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  recipients           CampaignRecipient[]
+  campaigns            Campaign[]
+  messages             EmailMessage[]
+
+  @@unique([ownerId, email])
+  @@index([ownerId, deletedAt])
+  @@index([status, nextSendAt])
+  @@index([imapNextSyncAt])
+}
+
+/// Atomic quota counters. scope examples: "acct:<id>:hour", "acct:<id>:day", "emp:<id>:day"
+model UsageCounter {
+  scope       String
+  windowStart DateTime
+  count       Int      @default(0)
+
+  @@id([scope, windowStart])
+  @@index([windowStart])
+}
+
+model Pitch {
+  id        String         @id @default(cuid())
+  ownerId   String
+  owner     User           @relation(fields: [ownerId], references: [id])
+  name      String
+  archived  Boolean        @default(false)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  versions  PitchVersion[]
+
+  @@index([ownerId, archived])
+}
+
+/// Immutable snapshot of a pitch. Campaigns reference a version, so later edits never rewrite history.
+model PitchVersion {
+  id        String     @id @default(cuid())
+  pitchId   String
+  pitch     Pitch      @relation(fields: [pitchId], references: [id], onDelete: Cascade)
+  version   Int
+  subjects  String[]
+  html      String
+  text      String
+  createdAt DateTime   @default(now())
+  campaigns Campaign[]
+
+  @@unique([pitchId, version])
+}
+
+model RecipientList {
+  id        String    @id @default(cuid())
+  ownerId   String
+  owner     User      @relation(fields: [ownerId], references: [id])
+  name      String
+  source    String?
+  createdAt DateTime  @default(now())
+  contacts  Contact[]
+
+  @@index([ownerId])
+}
+
+model Contact {
+  id            String        @id @default(cuid())
+  ownerId       String
+  listId        String
+  list          RecipientList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  email         String
+  firstName     String?
+  lastName      String?
+  company       String?
+  fields        Json?
+  consentSource String?
+  createdAt     DateTime      @default(now())
+
+  @@unique([listId, email])
+  @@index([ownerId, email])
+}
+
+model Campaign {
+  id               String          @id @default(cuid())
+  ownerId          String
+  owner            User            @relation(fields: [ownerId], references: [id])
+  name             String
+  type             CampaignType    @default(FRESH)
+  status           CampaignStatus  @default(DRAFT)
+  archived         Boolean         @default(false)
+  accountId        String?
+  account          EmailAccount?   @relation(fields: [accountId], references: [id])
+  parentId         String?
+  parent           Campaign?       @relation("FollowUps", fields: [parentId], references: [id])
+  followUps        Campaign[]      @relation("FollowUps")
+  pitchVersionId   String?
+  pitchVersion     PitchVersion?   @relation(fields: [pitchVersionId], references: [id])
+  subject          String
+  html             String
+  text             String
+  hourlyRate       Int             @default(30)
+  nextSendAt       DateTime?
+  scheduledAt      DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  pausedReason     String?
+  pausedByAdmin    Boolean         @default(false)
+  /// Fresh campaigns: every mailbox selected for sending (recipients are split evenly between them).
+  accountIds       String[]        @default([])
+  /// Per-mailbox pacing for this campaign: { accountId: ISO time of the next allowed send }.
+  accountPacing    Json?
+  approvedAt       DateTime?
+  approvedById     String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  recipients       CampaignRecipient[]
+
+  @@index([ownerId, archived, status])
+  @@index([status, nextSendAt])
+  @@index([status, scheduledAt])
+  @@index([createdAt])
+}
+
+model CampaignRecipient {
+  id               String          @id @default(cuid())
+  campaignId       String
+  campaign         Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  accountId        String?
+  account          EmailAccount?   @relation(fields: [accountId], references: [id])
+  contactId        String?
+  parentId         String?
+  email            String
+  vars             Json?
+  status           RecipientStatus @default(PENDING)
+  holdReason       String?
+  attempts         Int             @default(0)
+  nextAttemptAt    DateTime        @default(now())
+  lockedAt         DateTime?
+  lockedBy         String?
+  token            String          @unique
+  messageId        String?
+  // Provider-assigned id (Gmail API message id / Amazon SES MessageId), used for reply matching.
+  providerMessageId String?
+  inReplyTo        String?
+  references       String?
+  subject          String?
+  sentAt           DateTime?
+  lastError        String?
+  openedAt         DateTime?
+  openCount        Int             @default(0)
+  clickedAt        DateTime?
+  clickCount       Int             @default(0)
+  repliedAt        DateTime?
+  unsubscribedAt   DateTime?
+  bouncedAt        DateTime?
+  createdAt        DateTime        @default(now())
+
+  attemptsLog      SendAttempt[]
+
+  @@unique([campaignId, email])
+  @@index([campaignId, status, nextAttemptAt])
+  @@index([status, lockedAt])
+  @@index([messageId])
+  @@index([providerMessageId])
+  @@index([email])
+}
+
+model SendAttempt {
+  id             String        @id @default(cuid())
+  recipientId    String
+  recipient      CampaignRecipient @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  campaignId     String
+  accountId      String
+  attemptNo      Int
+  idempotencyKey String        @unique
+  status         AttemptStatus @default(STARTED)
+  messageId      String
+  smtpCode       Int?
+  response       String?
+  errorClass     String?
+  startedAt      DateTime      @default(now())
+  finishedAt     DateTime?
+
+  @@index([campaignId])
+  @@index([accountId, startedAt])
+  @@index([status, startedAt])
+}
+
+/// scopeKey = "global" (unsubscribe, complaint, hard bounce) or an employee id (manual suppression).
+model Suppression {
+  id         String            @id @default(cuid())
+  scopeKey   String
+  email      String
+  reason     SuppressionReason
+  source     String?
+  campaignId String?
+  createdAt  DateTime          @default(now())
+
+  @@unique([scopeKey, email])
+  @@index([email])
+}
+
+model TrackingEvent {
+  id           String    @id @default(cuid())
+  recipientId  String
+  campaignId   String
+  type         EventType
+  url          String?
+  userAgent    String?
+  ipHash       String?
+  suspectedBot Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+
+  @@index([campaignId, type])
+  @@index([recipientId])
+}
+
+model EmailMessage {
+  id          String       @id @default(cuid())
+  ownerId     String
+  owner       User         @relation(fields: [ownerId], references: [id])
+  accountId   String
+  account     EmailAccount @relation(fields: [accountId], references: [id])
+  recipientId String?
+  campaignId  String?
+  direction   Direction
+  messageId   String
+  inReplyTo   String?
+  references  String?
+  fromAddr    String
+  toAddr      String
+  subject     String?
+  text        String?
+  html        String?
+  isBounce    Boolean      @default(false)
+  isRead      Boolean      @default(false)
+  /// INBOX or SPAM (folder the message was found in).
+  folder      String       @default("INBOX")
+  /// Hidden by the employee ("deleted"); kept so a re-sync never brings it back.
+  deletedAt   DateTime?
+  receivedAt  DateTime     @default(now())
+
+  @@unique([accountId, messageId])
+  @@index([ownerId, receivedAt])
+  @@index([ownerId, deletedAt, receivedAt])
+  @@index([recipientId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  entityType String?
+  entityId   String?
+  meta       Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actorId])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String?
+  user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  forAdmins Boolean   @default(false)
+  type      String
+  title     String
+  body      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+  @@index([forAdmins, createdAt])
+}
+
+model HealthCheck {
+  id        String   @id @default(cuid())
+  component String
+  ok        Boolean
+  latencyMs Int?
+  detail    String?
+  createdAt DateTime @default(now())
+
+  @@index([component, createdAt])
+}
+
+/// Worker lease + heartbeat. Lease-based (not session advisory locks) so it works through Neon's pooler.
+model WorkerLease {
+  id          String   @id
+  instanceId  String
+  leaseUntil  DateTime
+  heartbeatAt DateTime
+  startedAt   DateTime
+  info        Json?
+}

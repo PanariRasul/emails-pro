@@ -1,0 +1,111 @@
+# Emails Pro — Render Blueprint (Free plan)
+# Render Dashboard → New → Blueprint → select this repository.
+# Values marked `sync: false` are entered in the Dashboard on first deploy (never committed to Git).
+# See docs/DEPLOYMENT.md for the full walkthrough.
+
+services:
+  # ---------------------------------------------------------------------------
+  # Backend API + in-process background worker (Render Free Web Service)
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: emails-pro-api
+    runtime: node
+    plan: free
+    region: singapore            # pick the region closest to your Neon database
+    rootDir: backend
+    # Migrations run here (controlled step) because pre-deploy commands are not available on Free.
+    # `prisma migrate deploy` only applies committed migrations; it never resets data.
+    buildCommand: npm ci --omit=dev && npx prisma generate && npx prisma migrate deploy
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL         # Neon POOLED connection string (host contains -pooler)
+        sync: false
+      - key: DIRECT_URL           # Neon DIRECT connection string (used only by migrations)
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: TRACKING_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY       # 32 bytes base64: `openssl rand -base64 32` — BACK IT UP; losing it makes stored credentials unreadable
+        sync: false
+      - key: PUBLIC_API_URL       # e.g. https://emails-pro-api.onrender.com (used in tracking/unsubscribe links)
+        sync: false
+      - key: CORS_ORIGINS         # e.g. https://emails-pro-web.onrender.com
+        sync: false
+      - key: BOOTSTRAP_ADMIN_EMAIL
+        sync: false
+      - key: BOOTSTRAP_ADMIN_PASSWORD   # remove after the first successful login
+        sync: false
+      - key: DB_POOL_MAX
+        value: "5"
+      - key: WORKER_TICK_MS
+        value: "5000"
+      - key: WORKER_IDLE_TICK_MS
+        value: "60000"
+      - key: APP_URL              # frontend URL, e.g. https://emails-pro-web.onrender.com (SSO redirects)
+        sync: false
+      - key: SYSTEM_MAIL_USER     # mailbox that sends login OTP / password-reset codes
+        value: emailspro.otp@gmail.com
+      # SYSTEM_MAIL_APP_PASSWORD works only where SMTP ports are open (local / paid instance).
+      # On Render Free connect the OTP mailbox with Google instead (Admin → Policies & settings → Login security).
+      # Optional:
+      # - key: SYSTEM_MAIL_APP_PASSWORD
+      # - key: MICROSOFT_CLIENT_ID / MICROSOFT_CLIENT_SECRET / MICROSOFT_TENANT   ("Continue with Microsoft")
+      # - key: GOOGLE_CLIENT_ID      (Google sign-in for Gmail/Workspace → Gmail API sending)
+      # - key: GOOGLE_CLIENT_SECRET
+      # - key: REDIS_URL             (only if a suitable Redis-compatible service is available)
+
+  # ---------------------------------------------------------------------------
+  # Frontend (Render Free Static Site)
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: emails-pro-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    pullRequestPreviewsEnabled: false
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Leave VITE_API_URL unset to use the same-origin /api rewrite below (recommended: keeps the
+      # refresh cookie first-party, which Safari and other browsers require).
+      # - key: VITE_API_URL
+      #   value: https://emails-pro-api.onrender.com
+    routes:
+      # Proxy API calls to the backend. CHANGE the host if your API service has a different URL.
+      - type: rewrite
+        source: /api/*
+        destination: https://emails-pro-api.onrender.com/api/*
+      # React Router fallback
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      - path: /index.html
+        name: Cache-Control
+        value: no-cache
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: Permissions-Policy
+        value: camera=(), microphone=(), geolocation=()
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.onrender.com; frame-src 'self' about:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"

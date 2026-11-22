@@ -61,6 +61,7 @@ export function refreshSession() {
     refreshPromise = (async () => {
       const res = await rawFetch('/api/auth/refresh', { method: 'POST', timeoutMs: 30_000 });
       const data = await parse(res);
+      if (typeof data !== 'object' || data === null) throw new ApiError(0, { error: { code: 'API_UNREACHABLE', message: 'The website could not reach the Emails Pro server.' } });
       if (!res.ok) throw new ApiError(res.status, data);
       setAccessToken(data.accessToken);
       return data;
@@ -115,6 +116,12 @@ export async function api(path, opts = {}) {
     }
 
     const data = await parse(res);
+    // Every Emails Pro API answer is JSON. Anything else (an empty body, an HTML page) means the request
+    // never reached our backend — usually the website's /api rewrite points to the wrong address.
+    if (typeof data !== 'object' || data === null) {
+      conn.setStatus('offline');
+      throw new ApiError(0, { error: { code: 'API_UNREACHABLE', message: `The website could not reach the Emails Pro server (it answered ${res.status} without data). Check that the /api rewrite of the website points to your backend address.` } });
+    }
     if (res.status < 500) conn.setStatus('online');
     if (!res.ok) throw new ApiError(res.status, data);
     return data;

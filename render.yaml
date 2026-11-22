@@ -79,7 +79,10 @@ services:
       # - key: VITE_API_URL
       #   value: https://emails-pro-api.onrender.com
     routes:
-      # Proxy API calls to the backend. CHANGE the host if your API service has a different URL.
+      # Proxy API calls to the backend.
+      # !! CHANGE the host to YOUR backend's URL (Render → your API web service → its .onrender.com address).
+      # !! If it points anywhere else, sign-in shows "could not reach the Emails Pro server".
+      # !! In the Render dashboard this rule must stay ABOVE the "/* → /index.html" rule.
       - type: rewrite
         source: /api/*
         destination: https://emails-pro-api.onrender.com/api/*

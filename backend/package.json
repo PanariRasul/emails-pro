@@ -17,9 +17,11 @@
     "render:build": "npm ci --omit=dev && prisma generate && prisma migrate deploy",
     "test": "node --test test/unit.test.js",
     "test:db": "node --test --test-concurrency=1 test/e2e.test.js test/recovery.test.js",
-    "check": "node --check src/server.js"
+    "check": "node --check src/server.js",
+    "ai:check": "node --env-file-if-exists=.env scripts/ai-check.js"
   },
   "dependencies": {
+    "@google/genai": "^3.6.1",
     "@node-rs/argon2": "^2.0.2",
     "@prisma/adapter-pg": "6.19.3",
     "@prisma/client": "6.19.3",

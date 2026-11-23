@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { ArrowDownRight, ArrowUpRight, Check, X } from "lucide-react";
 import { useTheme } from "../store/theme.js";
@@ -485,6 +486,9 @@ export function Notice({ tone = "info", children, className }) {
   );
 }
 
+// Open modals, newest last: Esc and outside clicks only close the top one (modals can open other modals).
+const modalStack = [];
+
 export function Modal({
   open,
   onClose,
@@ -495,49 +499,81 @@ export function Modal({
   size,
   headerExtra,
 }) {
+  const idRef = useRef(null);
+  if (!idRef.current) idRef.current = Symbol("modal");
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     if (!open) return undefined;
-    const onKey = (e) => e.key === "Escape" && onClose?.();
+    const id = idRef.current;
+    modalStack.push(id);
+    const onKey = (e) => {
+      if (e.key === "Escape" && modalStack[modalStack.length - 1] === id) {
+        e.stopPropagation();
+        closeRef.current?.();
+      }
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      const i = modalStack.indexOf(id);
+      if (i !== -1) modalStack.splice(i, 1);
+      if (!modalStack.length) document.body.style.overflow = prevOverflow;
+    };
+  }, [open]);
   if (!open) return null;
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-[6vh] backdrop-blur-sm"
-      onMouseDown={(e) => e.target === e.currentTarget && onClose?.()}
+      className="fixed inset-0 z-50 flex items-stretch justify-center overflow-y-auto bg-black/40 backdrop-blur-sm sm:items-start sm:p-4 sm:pt-[6vh]"
+      onMouseDown={(e) =>
+        e.target === e.currentTarget &&
+        modalStack[modalStack.length - 1] === idRef.current &&
+        onClose?.()
+      }
     >
       <div
         role="dialog"
         aria-modal="true"
+        aria-label={typeof title === "string" ? title : undefined}
         className={cx(
-          "w-full animate-pop rounded-3xl bg-card shadow-2xl ring-1 ring-line",
-          size === "xl" ? "max-w-6xl" : wide ? "max-w-3xl" : "max-w-lg",
+          "flex min-h-[100dvh] w-full animate-pop flex-col bg-card shadow-2xl ring-1 ring-line sm:min-h-0 sm:rounded-3xl",
+          size === "xl"
+            ? "sm:max-w-6xl"
+            : wide
+              ? "sm:max-w-3xl"
+              : "sm:max-w-lg",
         )}
       >
-        <div className="flex items-center justify-between px-6 pt-5 pb-2">
-          <h3 className="text-lg font-semibold text-fg">{title}</h3>
-          {headerExtra && <div className="ml-auto mr-2">{headerExtra}</div>}
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-2 bg-card px-4 pt-4 pb-2 sm:static sm:rounded-t-3xl sm:px-6 sm:pt-5">
+          <h3 className="min-w-0 truncate text-base font-semibold text-fg sm:text-lg">
+            {title}
+          </h3>
+          {headerExtra && <div className="ml-auto">{headerExtra}</div>}
           <IconButton
             icon={X}
             label="Close"
             onClick={onClose}
-            className="h-8 w-8"
+            className="h-9 w-9 shrink-0"
           />
         </div>
         <div
           className={cx(
-            "overflow-y-auto px-6 py-3",
-            size === "xl" ? "max-h-[78vh]" : "max-h-[70vh]",
+            "flex-1 overflow-y-auto px-4 py-3 sm:flex-none sm:px-6",
+            size === "xl" ? "sm:max-h-[78vh]" : "sm:max-h-[70vh]",
           )}
         >
           {children}
         </div>
         {footer && (
-          <div className="flex justify-end gap-2 px-6 pt-2 pb-5">{footer}</div>
+          <div className="sticky bottom-0 flex flex-wrap justify-end gap-2 border-t border-line bg-card px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:static sm:rounded-b-3xl sm:border-0 sm:px-6 sm:pt-2 sm:pb-5">
+            {footer}
+          </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -698,7 +734,7 @@ export const toast = {
 export function Toasts() {
   const items = useToasts((s) => s.items);
   return (
-    <div className="pointer-events-none fixed bottom-5 right-5 z-[70] flex w-80 flex-col gap-2">
+    <div className="pointer-events-none fixed bottom-24 left-3 right-3 z-[70] flex flex-col gap-2 sm:left-auto sm:right-5 sm:w-80 md:bottom-5">
       {items.map((t) => (
         <div
           key={t.id}

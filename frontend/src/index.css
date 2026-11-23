@@ -196,6 +196,19 @@
     scrollbar-width: thin;
     scrollbar-color: var(--subtle-2) transparent;
   }
+
+  /* Phones: let grid/flex children shrink instead of pushing the page wider. Wide tables scroll inside their own box. */
+  main .grid>*,
+  main .card,
+  main section,
+  main aside {
+    min-width: 0;
+  }
+
+  html,
+  body {
+    overflow-x: clip;
+  }
 }
 
 @layer components {
@@ -345,4 +358,14 @@
 
 .dark .ep-doc .ep-var {
   color: #1d4ed8;
+}
+
+/* iPhone Safari zooms into inputs smaller than 16px; keep them at 16px on phones. */
+@media (max-width: 639px) {
+
+  input:not([type=checkbox]):not([type=radio]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
 }

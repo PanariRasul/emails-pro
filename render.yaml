@@ -54,6 +54,8 @@ services:
         value: emailspro.otp@gmail.com
       # SYSTEM_MAIL_APP_PASSWORD works only where SMTP ports are open (local / paid instance).
       # On Render Free connect the OTP mailbox with Google instead (Admin → Policies & settings → Login security).
+      - key: GEMINI_API_KEY       # AI assistant (free key from aistudio.google.com). Leave empty to switch AI off.
+        sync: false
       # Optional:
       # - key: SYSTEM_MAIL_APP_PASSWORD
       # - key: MICROSOFT_CLIENT_ID / MICROSOFT_CLIENT_SECRET / MICROSOFT_TENANT   ("Continue with Microsoft")

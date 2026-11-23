@@ -347,7 +347,7 @@ function LoginSecurity({ settings, mail }) {
                 <div className="mt-0.5 text-sm text-muted">
                   {mail.from || "emailspro.otp@gmail.com"}
                   {mail.via &&
-                    ` · ${mail.via === "GMAIL_API" ? "Gmail API (Google sign-in)" : "SMTP app password"}`}
+                    ` · ${mail.via === "GMAIL_API" ? "Gmail API (Google sign-in)" : mail.via === "BREVO" ? "Brevo email API" : "SMTP app password"}`}
                 </div>
                 <div className="mt-1 max-w-xl text-xs text-muted">
                   {mail.note}
@@ -428,12 +428,15 @@ function LoginSecurity({ settings, mail }) {
           </Notice>
         )}
         <Notice tone="neutral">
-          <b>Which method should I use?</b> Render Free blocks SMTP ports, so on
-          Render use <b>Connect with Google</b> (requires GOOGLE_CLIENT_ID /
-          GOOGLE_CLIENT_SECRET) to send through the Gmail API. For local or paid
-          hosting you can instead set <code>SYSTEM_MAIL_APP_PASSWORD</code> (a
-          Gmail app password for emailspro.otp@gmail.com) in{" "}
-          <code>backend/.env</code>.
+          <b>Which method should I use?</b> Render Free blocks SMTP ports (25,
+          465, 587), so an app password times out there. On Render use one of:
+          <b> Brevo</b> — easiest: free account at brevo.com (300 emails/day),
+          verify your sender address, then set <code>BREVO_API_KEY</code> and{" "}
+          <code>SYSTEM_MAIL_FROM</code> in Render → Environment; or{" "}
+          <b>Connect with Google</b> (needs GOOGLE_CLIENT_ID /
+          GOOGLE_CLIENT_SECRET) to send through the Gmail API.
+          <code>SYSTEM_MAIL_APP_PASSWORD</code> works only locally or on a paid
+          Render instance.
         </Notice>
       </div>
     </>

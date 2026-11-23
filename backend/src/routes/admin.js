@@ -477,9 +477,13 @@ router.post(
           ? "The OTP mailbox is not configured yet."
           : err.code === "EAUTH"
             ? "Gmail rejected the app password. Check SYSTEM_MAIL_APP_PASSWORD (2-Step Verification must be on)."
-            : blocked
-              ? 'Could not reach the SMTP server. On Render Free SMTP ports are blocked — use "Connect with Google" instead.'
-              : `Sending failed: ${String(err.message).slice(0, 200)}`,
+            : err.code === "BREVO_KEY"
+              ? "Brevo rejected the API key. Check BREVO_API_KEY (Brevo → SMTP & API → API keys)."
+              : err.code === "BREVO_SENDER"
+                ? `Brevo does not accept the sender address. Add and verify it in Brevo → Senders, domains & dedicated IPs, and set SYSTEM_MAIL_FROM to it. (${String(err.message).slice(0, 120)})`
+                : blocked
+                  ? 'Could not reach the SMTP server. Render Free blocks SMTP ports 25/465/587 — set BREVO_API_KEY (free, HTTPS) or use "Connect with Google" instead.'
+                  : `Sending failed: ${String(err.message).slice(0, 200)}`,
       );
     }
   }),

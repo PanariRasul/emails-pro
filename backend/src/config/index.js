@@ -90,6 +90,14 @@ export const config = Object.freeze({
     .replace(/\/$/, ""),
 
   // System mailbox for login OTP / password-reset codes (see services/systemMail.js).
+  // Brevo email API (HTTPS, works on Render Free): BREVO_API_KEY + a sender email verified in Brevo.
+  brevo: {
+    apiKey: (env.BREVO_API_KEY || "").trim(),
+    baseUrl: (env.NODE_ENV !== "production" && env.BREVO_API_BASE
+      ? env.BREVO_API_BASE
+      : "https://api.brevo.com/v3"
+    ).replace(/\/$/, ""),
+  },
   systemMail: {
     user: (env.SYSTEM_MAIL_USER || "emailspro.otp@gmail.com").trim(),
     pass: (env.SYSTEM_MAIL_APP_PASSWORD || "").replace(/\s+/g, ""), // Gmail shows app passwords with spaces
@@ -111,6 +119,19 @@ export const config = Object.freeze({
       return v === "OFF" || v === "NONE" ? "" : v;
     })(),
     timeoutMs: Math.max(10_000, Number(env.GEMINI_TIMEOUT_MS) || 60_000),
+    // Used automatically when the main model is overloaded or out of free quota. Comma-separated; "off" = none.
+    fallbackModels: (() => {
+      const v = (
+        env.GEMINI_FALLBACK_MODELS ??
+        "gemini-flash-lite-latest,gemini-2.5-flash"
+      ).trim();
+      return /^(off|none)$/i.test(v)
+        ? []
+        : v
+            .split(",")
+            .map((m) => m.trim())
+            .filter(Boolean);
+    })(),
   },
   logLevel: env.LOG_LEVEL || (isProd ? "info" : "debug"),
 });

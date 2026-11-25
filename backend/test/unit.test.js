@@ -578,3 +578,77 @@ test("pitch score rewards short, personal pitches and flags spammy ones", async 
       scoreSubject("FREE MONEY!!!").score,
   );
 });
+
+test("campaign finish estimate follows speed, daily caps and the employee total", async () => {
+  const { simulate } = await import("../src/services/eta.js");
+  const settings = {
+    defaultHourlyLimit: 60,
+    defaultDailyLimit: 5000,
+    maxEmployeeDailyLimit: 10000,
+    defaultAccountLimit: 100,
+    maxAccountLimit: 1000,
+  };
+  const owner = { hourlyLimit: null, dailyLimit: null, accountLimit: null };
+  const acct = (extra = {}) => ({
+    maxHourly: null,
+    maxDaily: null,
+    warmupEnabled: false,
+    consecutiveFailures: 0,
+    ...extra,
+  });
+  const start = new Date("2026-11-25T00:00:00Z"); // start of a UTC day and hour
+
+  // 2 mailboxes x 100 emails at 10/hour each -> 10 hours.
+  let r = simulate({
+    start,
+    owner,
+    settings,
+    mailboxes: [
+      { account: acct(), pending: 100, rate: 10, share: 1 },
+      { account: acct(), pending: 100, rate: 10, share: 1 },
+    ],
+  });
+  assert.equal(r.hours, 10);
+  assert.equal(r.limitedBy, "speed");
+
+  // A mailbox shared with one other campaign runs at half speed -> 20 hours.
+  r = simulate({
+    start,
+    owner,
+    settings,
+    mailboxes: [{ account: acct(), pending: 100, rate: 10, share: 2 }],
+  });
+  assert.equal(r.hours, 20);
+
+  // Account daily cap 50 at 60/hour: 120 emails -> day 1: 50, day 2: 50, day 3: 20 (finishes on the third day).
+  r = simulate({
+    start,
+    owner,
+    settings,
+    mailboxes: [
+      { account: acct({ maxDaily: 50 }), pending: 120, rate: 60, share: 1 },
+    ],
+  });
+  assert.ok(
+    r.finishAt >= new Date("2026-11-27T00:00:00Z") &&
+      r.finishAt < new Date("2026-11-27T02:00:00Z"),
+    String(r.finishAt),
+  );
+  assert.equal(r.limitedBy, "daily");
+
+  // Employee total 100/day across 3 mailboxes, 300 emails -> 3 days even though each mailbox could do more.
+  const capped = { ...owner, dailyLimit: 100 };
+  r = simulate({
+    start,
+    owner: capped,
+    settings,
+    mailboxes: [0, 1, 2].map(() => ({
+      account: acct(),
+      pending: 100,
+      rate: 60,
+      share: 1,
+    })),
+  });
+  assert.ok(r.finishAt >= new Date("2026-11-27T00:00:00Z"), String(r.finishAt));
+  assert.equal(r.limitedBy, "employee");
+});

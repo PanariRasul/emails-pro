@@ -263,6 +263,8 @@ model EmailAccount {
   imapUidValidity      BigInt?
   imapLastUid          Int?
   imapLastSyncAt       DateTime?
+  /// One-off "fetch older emails": the next full sync looks back to this date (then it is cleared).
+  imapBackfillSince    DateTime?
   imapNextSyncAt       DateTime?
   deletedAt            DateTime?
   /// Free-text group chosen by the employee ("Gmail", "Zoho team", …) for quick multi-select in campaigns.

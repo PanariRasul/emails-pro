@@ -8,7 +8,8 @@ import { sanitizeInboundHtml } from "./template.js";
 
 const MAX_MESSAGES_PER_SYNC = 100;
 const MAX_SOURCE_BYTES = 200 * 1024;
-const FIRST_SYNC_DAYS = 7;
+const FIRST_SYNC_DAYS = 30; // first sync of a newly connected mailbox looks back this far
+const SENDER_MATCH_DAYS = 120; // a mail from someone we emailed in this window counts as their reply
 const SPAM_NAMES =
   /^(spam|junk|junk e-?mail|junk mail|bulk|bulk mail|\[gmail\]\/spam|\[google mail\]\/spam|inbox[./]spam|inbox[./]junk)$/i;
 
@@ -122,7 +123,7 @@ export function detectBounce(parsed, fromAddr) {
 async function syncFolder(
   client,
   account,
-  { path, folder, lastUid, uidValidity: storedValidity },
+  { path, folder, lastUid, uidValidity: storedValidity, since: sinceDate },
 ) {
   const out = {
     processed: 0,
@@ -143,7 +144,8 @@ async function syncFolder(
       storedValidity == null ||
       BigInt(storedValidity) !== uidValidity
     ) {
-      const since = new Date(Date.now() - FIRST_SYNC_DAYS * 86_400_000);
+      const since =
+        sinceDate || new Date(Date.now() - FIRST_SYNC_DAYS * 86_400_000);
       uids = (await client.search({ since }, { uid: true })) || [];
       out.maxUid = 0;
     } else {
@@ -204,11 +206,13 @@ export async function syncAccount(account) {
   const total = { processed: 0, replies: 0, bounces: 0 };
   await client.connect();
   try {
+    const since = account.imapBackfillSince || null; // set by "Fetch older emails"
     const inbox = await syncFolder(client, account, {
       path: "INBOX",
       folder: "INBOX",
       lastUid: account.imapLastUid,
       uidValidity: account.imapUidValidity,
+      since,
     });
     const data = {
       imapUidValidity: inbox.uidValidity,
@@ -228,6 +232,7 @@ export async function syncAccount(account) {
           folder: "SPAM",
           lastUid: account.imapSpamLastUid,
           uidValidity: account.imapSpamUidValidity,
+          since,
         });
         Object.assign(data, {
           imapSpamPath: spamPath,
@@ -244,6 +249,7 @@ export async function syncAccount(account) {
       );
       data.imapSpamPath = null; // re-detect next time
     }
+    if (since) data.imapBackfillSince = null; // the look-back date was used for this full sync
     if (more) data.imapNextSyncAt = new Date(Date.now() + 20_000);
     await prisma.emailAccount.update({ where: { id: account.id }, data });
   } finally {
@@ -339,6 +345,25 @@ async function handleInbound(account, msg, folder = "INBOX") {
     }
   } else {
     recipient = await findRecipientByRefs(account, headerRefs);
+    // Some mail apps drop the In-Reply-To/References headers (or the person writes a new email instead of
+    // replying). If this mail comes from someone this mailbox emailed in a campaign, treat it as their reply.
+    if (!recipient && fromAddr) {
+      const at = parsed.date || new Date();
+      recipient = await prisma.campaignRecipient.findFirst({
+        where: {
+          email: fromAddr,
+          accountId: account.id,
+          campaign: { ownerId: account.ownerId },
+          sentAt: {
+            not: null,
+            lte: at,
+            gte: new Date(at.getTime() - SENDER_MATCH_DAYS * 86_400_000),
+          },
+        },
+        orderBy: { sentAt: "desc" },
+        select: RECIPIENT_SELECT,
+      });
+    }
   }
   if (!recipient) return null; // Only campaign-related mail is stored (keeps Neon storage small).
 
@@ -466,3 +491,4 @@ export async function findInSent(account, messageIds) {
   }
   return found;
 }
+export const _testing = { handleInbound };

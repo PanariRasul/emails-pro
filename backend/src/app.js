@@ -1,4 +1,5 @@
 import { aiRouter } from "./routes/ai.js";
+import crypto from "node:crypto";
 import express from "express";
 import helmet from "helmet";
 import cors from "cors";
@@ -121,7 +122,47 @@ export function createApp() {
     }),
   );
 
+  // One worker pass for serverless hosts (Vercel). Protected by CRON_SECRET; Vercel Cron sends it as a Bearer token.
+  app.get("/api/cron/tick", async (req, res, next) => {
+    try {
+      const secret = process.env.CRON_SECRET || "";
+      const auth = req.get("authorization") || "";
+      const given = auth.startsWith("Bearer ")
+        ? auth.slice(7)
+        : String(req.query.key || "");
+      if (
+        !secret ||
+        given.length !== secret.length ||
+        !crypto.timingSafeEqual(Buffer.from(given), Buffer.from(secret))
+      ) {
+        return res
+          .status(404)
+          .json({ error: { code: "NOT_FOUND", message: "Not found" } });
+      }
+      const { runWorkerOnce } = await import("./worker/index.js");
+      return res.json(
+        await runWorkerOnce({
+          budgetMs: Math.min(
+            250_000,
+            Number(process.env.CRON_BUDGET_MS) || 50_000,
+          ),
+        }),
+      );
+    } catch (err) {
+      return next(err);
+    }
+  });
+
   app.use(notFoundHandler);
   app.use(errorHandler);
   return app;
+}
+
+/**
+ * Default export for Vercel's zero-config Express detection (it loads src/app.js and needs a default export
+ * that is a function). Render does not use this: it runs src/server.js, which calls createApp() and app.listen().
+ */
+export default async function vercelHandler(req, res) {
+  const { default: handler } = await import("./serverless.js");
+  return handler(req, res);
 }

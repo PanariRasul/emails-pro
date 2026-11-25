@@ -101,6 +101,16 @@ export function createApp() {
     return next();
   });
 
+  // Serverless (Vercel): let ordinary API traffic start short worker passes (throttled). No-op on Render.
+  app.use("/api", (req, _res, next) => {
+    if (!req.path.startsWith("/cron/") && req.path !== "/health") {
+      import("./worker/index.js")
+        .then((w) => w.kickWorker("request"))
+        .catch(() => {});
+    }
+    next();
+  });
+
   app.use("/api/auth", authRoutes);
   app.use("/api/oauth", oauthRouter);
   app.use("/api/smtp-accounts", accountRoutes);

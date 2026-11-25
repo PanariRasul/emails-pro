@@ -25,6 +25,7 @@
     "@node-rs/argon2": "^2.0.2",
     "@prisma/adapter-pg": "6.19.3",
     "@prisma/client": "6.19.3",
+    "@vercel/functions": "^3.11.3",
     "compression": "^1.8.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -37,7 +38,7 @@
     "pg": "^8.23.1",
     "pino": "^9.6.0",
     "prisma": "6.19.3",
-    "sanitize-html": "2.17.5",
+    "sanitize-html": "^2.17.2",
     "zod": "^4.6.7"
   },
   "optionalDependencies": {

@@ -5,6 +5,7 @@
 //  - Adaptive sleep: short ticks only while campaigns are sending; long idle ticks otherwise.
 import { config } from "../config/index.js";
 import { prisma, isTransientDbError } from "../lib/prisma.js";
+import { waitUntil } from "@vercel/functions";
 import { logger } from "../lib/logger.js";
 import { getSettings } from "../services/settings.js";
 import { closeAllTransports } from "../services/smtp.js";
@@ -47,12 +48,66 @@ let wakeResolve = null;
 let loopPromise = null;
 
 export function workerState() {
-  return { ...state };
+  return {
+    ...state,
+    mode: SERVERLESS ? "serverless" : "background",
+    ...(SERVERLESS ? { leader: Boolean(kickInFlight) || state.leader } : {}),
+  };
 }
 
 /** Called by the API after starting/resuming a campaign so sending begins immediately. */
 export function wakeWorker() {
   if (wakeResolve) wakeResolve();
+  else if (SERVERLESS) kickWorker("wake", { force: true });
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Serverless hosts (Vercel) have no long-running process, so the loop above never runs there. Instead the
+// worker runs in short passes that are started:
+//   1. after API requests (while anyone uses the app) — kickWorker(), throttled;
+//   2. right away when a campaign is started/resumed — wakeWorker();
+//   3. by GET /api/cron/tick (Vercel Cron or an external scheduler) — so campaigns also send when nobody is online.
+// Each pass keeps the function alive after the response with waitUntil(), and uses the same PostgreSQL lease,
+// so two passes (or Render + Vercel) never send at the same time.
+// ---------------------------------------------------------------------------------------------------------
+const SERVERLESS =
+  Boolean(process.env.VERCEL) && process.env.SERVERLESS_WORKER !== "off";
+const KICK_EVERY_MS = 20_000;
+let kickInFlight = null;
+let lastKickAt = 0;
+
+export function isServerless() {
+  return SERVERLESS;
+}
+
+export function kickWorker(reason = "request", { force = false } = {}) {
+  if (!SERVERLESS || state.running || kickInFlight) return false;
+  if (!force && Date.now() - lastKickAt < KICK_EVERY_MS) return false;
+  lastKickAt = Date.now();
+  const budgetMs = Math.min(
+    250_000,
+    Math.max(15_000, Number(process.env.WORKER_KICK_BUDGET_MS) || 40_000),
+  );
+  kickInFlight = runWorkerOnce({ budgetMs, minGapMs: force ? 0 : 25_000 })
+    .then((r) => {
+      if (r?.sent) logger.info({ reason, ...r }, "serverless worker pass");
+      return r;
+    })
+    .catch((err) =>
+      logger.warn(
+        { reason, err: err.message },
+        "serverless worker pass failed",
+      ),
+    )
+    .finally(() => {
+      kickInFlight = null;
+    });
+  try {
+    waitUntil(kickInFlight); // keep the function running after the response has been sent
+  } catch {
+    /* not inside a Vercel request: the promise still runs while the process lives */
+  }
+  return true;
 }
 
 function sleep(ms) {
@@ -243,13 +298,22 @@ export async function stopWorker(timeoutMs = 25_000) {
  * One bounded worker pass, for serverless hosts (Vercel) where no background loop can run.
  * Uses the same PostgreSQL lease, so it never runs alongside another active worker (e.g. on Render).
  */
-export async function runWorkerOnce({ budgetMs = 50_000 } = {}) {
+export async function runWorkerOnce({ budgetMs = 50_000, minGapMs = 0 } = {}) {
   if (state.running)
     return {
       ok: true,
       skipped: "the background worker is already running in this process",
     };
   const started = Date.now();
+  if (minGapMs > 0) {
+    // Another instance ran a pass a moment ago: nothing to do yet (keeps database work low).
+    const last = await prisma.workerLease.findUnique({
+      where: { id: LEASE_ID },
+      select: { heartbeatAt: true },
+    });
+    if (last && Date.now() - new Date(last.heartbeatAt).getTime() < minGapMs)
+      return { ok: true, skipped: "ran recently" };
+  }
   const lease = await acquireLease();
   if (!lease.acquired)
     return { ok: true, skipped: "another worker holds the lease" };
@@ -288,5 +352,9 @@ export async function runWorkerOnce({ budgetMs = 50_000 } = {}) {
     closeAllTransports();
   }
   out.ms = Date.now() - started;
+  state.activeCampaigns = out.active;
+  state.sentThisProcess += out.sent;
+  state.lastTickAt = new Date().toISOString();
+  state.lastSendTickAt = state.lastTickAt;
   return out;
 }

@@ -13,7 +13,7 @@ import {
   employeeLimits,
 } from "../services/limits.js";
 import { WORKING_STATUSES, statsFor } from "../services/campaigns.js";
-import { workerState } from "../worker/index.js";
+import { wakeWorker, workerState } from "../worker/index.js";
 import { config, trackingReachable } from "../config/index.js";
 import { syncAccount } from "../services/imap.js";
 import {
@@ -229,6 +229,46 @@ inboxRouter.post(
     });
     invalidateOwner(req.user.id);
     res.json(result);
+  }),
+);
+
+// "Fetch older emails": re-read every mailbox of this employee from N days ago (replies already stored are kept,
+// duplicates are skipped). Runs in the background in batches of 100 messages per mailbox.
+inboxRouter.post(
+  "/fetch-older",
+  rateLimit({
+    name: "inbox-backfill",
+    max: 3,
+    windowSec: 3600,
+    key: (req) => req.user.id,
+  }),
+  validate({
+    body: z.object({
+      days: z.coerce
+        .number()
+        .int()
+        .refine((d) => [30, 90, 180].includes(d), "Choose 30, 90 or 180 days"),
+    }),
+  }),
+  ah(async (req, res) => {
+    const since = new Date(Date.now() - req.body.days * 86_400_000);
+    const r = await prisma.emailAccount.updateMany({
+      where: { ownerId: req.user.id, deletedAt: null, imapHost: { not: null } },
+      data: {
+        imapBackfillSince: since,
+        imapNextSyncAt: new Date(),
+        imapLastUid: null,
+        imapUidValidity: null,
+        imapSpamLastUid: null,
+        imapSpamUidValidity: null,
+      },
+    });
+    audit(req, "inbox.fetch_older", "User", req.user.id, {
+      days: req.body.days,
+      mailboxes: r.count,
+    });
+    wakeWorker();
+    res.json({ mailboxes: r.count, since });
   }),
 );
 

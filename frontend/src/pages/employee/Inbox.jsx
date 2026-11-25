@@ -5,6 +5,7 @@ import {
   AlertOctagon,
   CheckCheck,
   ChevronLeft,
+  History,
   ExternalLink,
   Inbox as InboxIcon,
   Info,
@@ -27,6 +28,7 @@ import {
   Empty,
   ErrorBox,
   Loading,
+  Modal,
   PageHeader,
   Pagination,
   Segmented,
@@ -255,6 +257,25 @@ export default function Inbox() {
   const [openId, setOpenId] = useState(null);
   const [selected, setSelected] = useState(() => new Set());
   const [syncing, setSyncing] = useState(false);
+  const [olderOpen, setOlderOpen] = useState(false);
+  const [olderBusy, setOlderBusy] = useState(0);
+  const fetchOlder = async (days) => {
+    setOlderBusy(days);
+    try {
+      const r = await post("/api/inbox/fetch-older", { days });
+      setOlderOpen(false);
+      toast.ok(
+        r.mailboxes
+          ? `Fetching replies from the last ${days} days in ${r.mailboxes} mailbox${r.mailboxes === 1 ? "" : "es"}. They appear here over the next few minutes.`
+          : "No mailbox with reply checking (IMAP) is connected",
+      );
+      setTimeout(() => invalidate("inbox", "dashboard"), 30_000);
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setOlderBusy(0);
+    }
+  };
 
   const list = useQuery({
     queryKey: ["inbox", { page, tab, q }],
@@ -355,7 +376,7 @@ export default function Inbox() {
     <>
       <PageHeader
         title="Inbox"
-        subtitle="Replies and bounces from your inbox and spam folders, matched to their campaigns."
+        subtitle="Replies and bounces from your inbox and spam folders, matched to their campaigns (by reply headers or by the sender's address)."
         actions={
           <>
             <Button
@@ -366,12 +387,51 @@ export default function Inbox() {
             >
               {syncing ? "Checking…" : "Check now"}
             </Button>
+            <Button
+              variant="outline"
+              icon={History}
+              onClick={() => setOlderOpen(true)}
+            >
+              Fetch older emails
+            </Button>
             <Button variant="outline" icon={CheckCheck} onClick={readAll}>
               Mark all read
             </Button>
           </>
         }
       />
+      <Modal
+        open={olderOpen}
+        onClose={() => setOlderOpen(false)}
+        title="Fetch older emails"
+      >
+        <p className="text-sm text-muted">
+          Emails Pro re-reads the inbox and spam folders of all your connected
+          mailboxes and adds replies it missed. Replies already here are not
+          duplicated.
+        </p>
+        <p className="mt-2 text-sm text-muted">
+          Only replies from people you emailed in a campaign are shown — other
+          mail stays in your mailbox.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {[30, 90, 180].map((d) => (
+            <Button
+              key={d}
+              variant={d === 30 ? "brand" : "secondary"}
+              loading={olderBusy === d}
+              disabled={Boolean(olderBusy)}
+              onClick={() => fetchOlder(d)}
+            >
+              Last {d} days
+            </Button>
+          ))}
+        </div>
+        <p className="mt-3 text-xs text-faint">
+          Large mailboxes are read 100 emails at a time, so this can take a few
+          minutes. You can use the app meanwhile.
+        </p>
+      </Modal>
       <div className="card grid min-h-[640px] overflow-hidden lg:grid-cols-[380px_1fr]">
         <aside
           className={cx(

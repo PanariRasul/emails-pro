@@ -789,6 +789,22 @@ export const fmt = {
     if (s < 86400) return `${Math.round(s / 3600)}h ago`;
     return `${Math.round(s / 86400)}d ago`;
   },
+  /** "in 3h 20m" / "in 2 days" from now (for estimates). */
+  until: (d) => {
+    if (!d) return "—";
+    const m = Math.max(
+      0,
+      Math.round((new Date(d).getTime() - Date.now()) / 60_000),
+    );
+    if (m < 2) return "any minute";
+    if (m < 60) return `in ${m} min`;
+    if (m < 48 * 60) {
+      const h = Math.floor(m / 60);
+      const r = m % 60;
+      return `in ${h}h${r ? ` ${r}m` : ""}`;
+    }
+    return `in ${Math.round(m / 1440)} days`;
+  },
   pct: (n, d) => (d ? `${((n / d) * 100).toFixed(1)}%` : "—"),
   num: (n) => (n == null ? "—" : Number(n).toLocaleString()),
 };

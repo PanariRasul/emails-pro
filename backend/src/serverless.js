@@ -16,9 +16,13 @@ function getApp() {
       validateConfig();
       await initRedis();
       const app = createApp();
-      // Don't block the first request on the database; create the first admin in the background.
-      withDbRetry(() => bootstrapAdmin(), { attempts: 4, baseMs: 1000 }).catch(
-        (err) => logger.error({ err: err.message }, "bootstrap admin failed"),
+      // Create the first admin before serving (only does work while BOOTSTRAP_ADMIN_* is set and no admin exists),
+      // so the very first login after a deploy can't race it. A database outage doesn't stop the API from starting.
+      await withDbRetry(() => bootstrapAdmin(), {
+        attempts: 4,
+        baseMs: 1000,
+      }).catch((err) =>
+        logger.error({ err: err.message }, "bootstrap admin failed"),
       );
       logger.info(
         { version: config.version, host: "vercel" },

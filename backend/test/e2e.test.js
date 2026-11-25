@@ -43,6 +43,7 @@ function startFakeGemini() {
       }
       const reqBody = JSON.parse(body || "{}");
       gemini.last = reqBody;
+      gemini.lastPath = req.url;
       if (
         gemini.mode === "nothink" &&
         reqBody.generationConfig?.thinkingConfig
@@ -207,38 +208,42 @@ function startSmtp() {
 }
 
 async function startApi() {
-  api = spawn(process.execPath, ["src/server.js"], {
-    env: {
-      ...process.env,
-      NODE_ENV: "test",
-      DATABASE_URL: DB,
-      PORT: String(PORT),
-      JWT_SECRET: "e2e-secret-e2e-secret-e2e-secret-e2e!!",
-      ENCRYPTION_KEY: Buffer.from("e2e-key-e2e-key-e2e-key-e2e-key!").toString(
-        "base64",
-      ),
-      BOOTSTRAP_ADMIN_EMAIL: ADMIN.email,
-      BOOTSTRAP_ADMIN_PASSWORD: ADMIN.password,
-      PUBLIC_API_URL: BASE,
-      CORS_ORIGINS: "http://localhost:5173",
-      SMTP_DEV_INSECURE: "1",
-      SMTP_TIMEOUT_MS: "3000",
-      WORKER_TICK_MS: "300",
-      WORKER_IDLE_TICK_MS: "1000",
-      STUCK_SENDING_MINUTES: "10",
-      LOG_LEVEL: "warn",
-      RENDER_INSTANCE_ID: `e2e-${RUN}`,
-      SES_API_ENDPOINT: `http://127.0.0.1:${SES_PORT}`,
-      SYSTEM_MAIL_USER: "otp@emailspro.test",
-      SYSTEM_MAIL_APP_PASSWORD: "pass",
-      SYSTEM_MAIL_HOST: "127.0.0.1",
-      SYSTEM_MAIL_PORT: String(SMTP_PORT),
-      SYSTEM_MAIL_SECURE: "false",
-      GEMINI_API_KEY: "e2e-gemini-key",
-      GEMINI_BASE_URL: `http://127.0.0.1:${GEM_PORT}`,
+  api = spawn(
+    process.execPath,
+    [process.env.E2E_SERVERLESS ? "test/serverless-host.js" : "src/server.js"],
+    {
+      env: {
+        ...process.env,
+        NODE_ENV: "test",
+        DATABASE_URL: DB,
+        PORT: String(PORT),
+        JWT_SECRET: "e2e-secret-e2e-secret-e2e-secret-e2e!!",
+        ENCRYPTION_KEY: Buffer.from(
+          "e2e-key-e2e-key-e2e-key-e2e-key!",
+        ).toString("base64"),
+        BOOTSTRAP_ADMIN_EMAIL: ADMIN.email,
+        BOOTSTRAP_ADMIN_PASSWORD: ADMIN.password,
+        PUBLIC_API_URL: BASE,
+        CORS_ORIGINS: "http://localhost:5173",
+        SMTP_DEV_INSECURE: "1",
+        SMTP_TIMEOUT_MS: "3000",
+        WORKER_TICK_MS: "300",
+        WORKER_IDLE_TICK_MS: "1000",
+        STUCK_SENDING_MINUTES: "10",
+        LOG_LEVEL: "warn",
+        RENDER_INSTANCE_ID: `e2e-${RUN}`,
+        SES_API_ENDPOINT: `http://127.0.0.1:${SES_PORT}`,
+        SYSTEM_MAIL_USER: "otp@emailspro.test",
+        SYSTEM_MAIL_APP_PASSWORD: "pass",
+        SYSTEM_MAIL_HOST: "127.0.0.1",
+        SYSTEM_MAIL_PORT: String(SMTP_PORT),
+        SYSTEM_MAIL_SECURE: "false",
+        GEMINI_API_KEY: "e2e-gemini-key",
+        GEMINI_BASE_URL: `http://127.0.0.1:${GEM_PORT}`,
+      },
+      stdio: ["ignore", "inherit", "inherit"],
     },
-    stdio: ["ignore", "inherit", "inherit"],
-  });
+  );
   for (let i = 0; i < 60; i += 1) {
     try {
       const r = await fetch(`${BASE}/ready`);
@@ -866,6 +871,11 @@ test(
       flaky.status,
       200,
       `one retry after Google 503: ${JSON.stringify(flaky.body)}`,
+    );
+    assert.match(
+      gemini.lastPath,
+      /gemini-flash-lite-latest:generateContent/,
+      "busy main model -> backup model answers",
     );
     gemini.mode = "503";
     const down = await call("POST", "/api/ai/improve-pitch", {

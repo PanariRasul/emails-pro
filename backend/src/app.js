@@ -150,14 +150,38 @@ export function createApp() {
           .json({ error: { code: "NOT_FOUND", message: "Not found" } });
       }
       const { runWorkerOnce } = await import("./worker/index.js");
-      return res.json(
-        await runWorkerOnce({
-          budgetMs: Math.min(
-            250_000,
-            Number(process.env.CRON_BUDGET_MS) || 50_000,
-          ),
-        }),
+      const budgetMs = Math.min(
+        250_000,
+        Math.max(10_000, Number(process.env.CRON_BUDGET_MS) || 50_000),
       );
+      if (req.query.wait === "1") {
+        // Manual check: wait for the result, but always answer before the request timeout.
+        const capped = Math.min(budgetMs, config.requestTimeoutMs - 5_000);
+        return res.json(await runWorkerOnce({ budgetMs: capped }));
+      }
+      // Schedulers (cron-job.org waits at most 30 s): answer at once and keep working after the response.
+      const pass = runWorkerOnce({ budgetMs })
+        .then((r) => {
+          if (r?.sent) logger.info({ ...r }, "cron worker pass");
+          return r;
+        })
+        .catch((err) =>
+          logger.warn({ err: err.message }, "cron worker pass failed"),
+        );
+      try {
+        const { waitUntil } = await import("@vercel/functions");
+        waitUntil(pass);
+      } catch {
+        /* not on Vercel: the promise keeps running in this process */
+      }
+      return res
+        .status(202)
+        .json({
+          ok: true,
+          started: true,
+          budgetMs,
+          note: "Worker pass started. Add ?wait=1 to see its result.",
+        });
     } catch (err) {
       return next(err);
     }

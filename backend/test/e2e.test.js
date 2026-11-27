@@ -1323,7 +1323,12 @@ test(
     });
     assert.equal(m.status, 200);
     assert.equal(m.body.database.ok, true);
-    assert.equal(m.body.worker.leader, true);
+    if (m.body.worker.mode === "serverless")
+      assert.ok(
+        m.body.worker.heartbeatAgeSec != null,
+        "serverless passes have run",
+      );
+    else assert.equal(m.body.worker.leader, true);
     assert.ok(m.body.queue.unknownSends >= 1);
     const forbidden = await call("GET", "/api/admin/monitoring", {
       token: ctx.emp1.token,

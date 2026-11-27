@@ -109,6 +109,25 @@ export default function CampaignNew() {
       }));
   }, [usable, f.accountIds.length, f.touchedAccounts]);
 
+  // Keep the chosen speed one of the options shown. Otherwise the dropdown would display its first option
+  // while the form still held an older value (e.g. 30/hour for an account that allows 17 during warm-up).
+  const speedKey = (speedFrom?.speedOptions || [])
+    .map((o) => o.perHour)
+    .join(",");
+  useEffect(() => {
+    const opts = speedKey ? speedKey.split(",").map(Number) : [];
+    if (!opts.length) return;
+    setF((s) => {
+      const cur = Number(s.hourlyRate);
+      if (opts.includes(cur)) return s;
+      const fit = opts.filter((n) => n <= cur);
+      return {
+        ...s,
+        hourlyRate: fit.length ? Math.max(...fit) : Math.min(...opts),
+      };
+    });
+  }, [speedKey]);
+
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
   const toggleList = (id) =>
     setF((s) => ({
